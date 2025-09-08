@@ -30,18 +30,20 @@ jobs:
       - name: Install SonarScanner
         uses: warchant/setup-sonar-scanner@v7
 
-      # Optional but helpful: prove the token can see the project before scanning
       - name: Verify SonarCloud access
         env:
           SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
         run: |
           set -euo pipefail
-          ORG="ravisvprofile-actions22"
-          PROJ="vprofile-action"
+          ORG="ravisvprofile-actions22"      # or use your secret
+          PROJ="vprofile-action"             # or use your secret
+
+          # Returns 1 when the token can see the project
           curl -s -u "$SONAR_TOKEN:" \
-            "https://sonarcloud.io/api/projects/search?organizations=${ORG}&projects=${PROJ}" \
+            "https://sonarcloud.io/api/projects/search?organization=${ORG}&projects=${PROJ}" \
             | tee resp.json
-          echo "Projects visible:"; jq '.paging.total' -r resp.json
+          echo "Projects visible:"; jq -r '.paging.total' resp.json
+
 
       - name: SonarCloud scan
         env:
