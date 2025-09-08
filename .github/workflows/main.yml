@@ -44,6 +44,20 @@ jobs:
             | tee resp.json
           echo "Projects visible:"; jq -r '.paging.total' resp.json
 
+      - name: Validate token
+        env:
+          SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
+        run: |
+          curl -s -u "$SONAR_TOKEN:" https://sonarcloud.io/api/authentication/validate | tee /dev/stderr
+
+      - name: Verify project visibility
+        env:
+          SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
+        run: |
+          curl -s -u "$SONAR_TOKEN:" \
+            "https://sonarcloud.io/api/projects/search?organization=ravisvprofile-actions22&projects=vprofile-action" \
+            | jq '.paging.total'
+      
 
       - name: SonarCloud scan
         env:
