@@ -13,37 +13,48 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v4
 
-      # Set Java BEFORE Maven/Scanner
+      # Use the same JDK for Maven and the scanner
       - name: Set Java 17
         uses: actions/setup-java@v4
         with:
           distribution: temurin
           java-version: '17'
+          cache: maven
 
-      - name: Maven test + reports
+      # Build, test, Checkstyle, and generate Jacoco XML (needed by Sonar)
+      - name: Maven build & tests
         run: |
           mvn -B clean test checkstyle:checkstyle
-          # create Jacoco XML report expected by Sonar
           mvn -B jacoco:report
 
       - name: Install SonarScanner
         uses: warchant/setup-sonar-scanner@v7
 
-      - name: SonarCloud scan
+      # Optional but helpful: prove the token can see the project before scanning
+      - name: Verify SonarCloud access
         env:
-          SONAR_HOST_URL: https://sonarcloud.io
           SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
-          SONAR_ORG: ${{ secrets.SONAR_ORGANIZATION }}   # ravisvprofile-actions22
-          SONAR_PROJECT: ${{ secrets.SONAR_PROJECT_KEY }} # vprofile-action
         run: |
           set -euo pipefail
-          # Trim any sneaky spaces/CRLF from secrets (common cause of 404s)
-          HOST="$(printf '%s' "$SONAR_HOST_URL" | tr -d '\r' | xargs)"
-          ORG="$(printf '%s' "$SONAR_ORG"        | tr -d '\r' | xargs)"
-          PROJ="$(printf '%s' "$SONAR_PROJECT"   | tr -d '\r' | xargs)"
+          ORG="ravisvprofile-actions22"
+          PROJ="vprofile-action"
+          curl -s -u "$SONAR_TOKEN:" \
+            "https://sonarcloud.io/api/projects/search?organizations=${ORG}&projects=${PROJ}" \
+            | tee resp.json
+          echo "Projects visible:"; jq '.paging.total' -r resp.json
 
-          # One-time debug (safe; no token). Remove later if you want.
-          printf 'ORG=[%s]\nPROJ=[%s]\n' "$ORG" "$PROJ" | hexdump -C
+      - name: SonarCloud scan
+        env:
+          SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
+          SONAR_URL:   ${{ secrets.SONAR_URL }}               # e.g. https://sonarcloud.io
+          SONAR_ORG:   ${{ secrets.SONAR_ORGANIZATION }}      # ravisvprofile-actions22
+          SONAR_PROJ:  ${{ secrets.SONAR_PROJECT_KEY }}       # vprofile-action
+        run: |
+          set -euo pipefail
+          # Trim sneaky whitespace/CRLFs from secrets
+          HOST="$(printf '%s' "${SONAR_URL:-https://sonarcloud.io}" | tr -d '\r' | xargs)"
+          ORG="$(printf  '%s' "$SONAR_ORG" | tr -d '\r' | xargs)"
+          PROJ="$(printf '%s' "$SONAR_PROJ" | tr -d '\r' | xargs)"
 
           sonar-scanner \
             -Dsonar.host.url="$HOST" \
@@ -53,10 +64,10 @@ jobs:
             -Dsonar.projectName="vprofile-action" \
             -Dsonar.sources=src \
             -Dsonar.java.binaries="target/classes,target/test-classes" \
-            -Dsonar.junit.reportPaths=target/surefire-reports \
-            -Dsonar.coverage.jacoco.xmlReportPaths=target/site/jacoco/jacoco.xml \
-            -Dsonar.java.checkstyle.reportPaths=target/checkstyle-result.xml
-#
+            -Dsonar.junit.reportPaths="target/surefire-reports" \
+            -Dsonar.coverage.jacoco.xmlReportPaths="target/site/jacoco/jacoco.xml" \
+            -Dsonar.java.checkstyle.reportPaths="target/checkstyle-result.xml"
+
   BUILD_AND_PUBLISH:
     needs: Testing
     runs-on: ubuntu-latest
@@ -69,9 +80,9 @@ jobs:
         with:
           access_key: ${{ secrets.AWS_ACCESS_KEY_ID }}
           secret_key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
-          registry: ${{ secrets.REGISTRY }}
-          repo: ${{ env.ECR_REPOSITORY }}
-          region: ${{ env.AWS_REGION }}
+          registry:  ${{ secrets.REGISTRY }}
+          repo:      ${{ env.ECR_REPOSITORY }}
+          region:    ${{ env.AWS_REGION }}
           tags: latest,${{ github.run_number }}
           daemon_off: false
           dockerfile: ./Dockerfile
