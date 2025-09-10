@@ -1,9 +1,8 @@
 name: vprofile actions
 on: workflow_dispatch
-
 env:
   AWS_REGION: us-east-1
-  ECR_REPOSITORY: gitopsproject
+  ECR_REPOSITORY: vprofileapp
   EKS_CLUSTER: vprofile-eks
 
 jobs:
@@ -13,93 +12,82 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v4
 
+      - name: Maven test
+        run: mvn test
+
+      - name: Checkstyle
+        run: mvn checkstyle:checkstyle      
+
       # Use the same JDK for Maven and the scanner
-      - name: Set Java 17
-        uses: actions/setup-java@v4
+      - name: Set Java 11
+        uses: actions/setup-java@v3
         with:
           distribution: temurin
-          java-version: '17'
-          cache: maven
+          java-version: '11'
 
-      # Build, test, Checkstyle, and generate Jacoco XML (needed by Sonar)
-      - name: Maven build & tests
-        run: |
-          mvn -B clean test checkstyle:checkstyle
-          mvn -B jacoco:report
+      # # Build, test, Checkstyle, and generate Jacoco XML (needed by Sonar)
+      # - name: Maven build & tests
+      #   run: |
+      #     mvn -B clean test checkstyle:checkstyle
+      #     mvn -B jacoco:report
 
-      - name: Install SonarScanner
+      - name: Setup SonarScanner
         uses: warchant/setup-sonar-scanner@v7
 
       - name: Verify SonarCloud access
         env:
           SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
-        run: |
-          set -euo pipefail
-          ORG="ravisvprofile-actions22"      # or use your secret
-          PROJ="vprofile-action"             # or use your secret
+        run: sonar-scanner
+            -Dsonar.host.url=${{ secrets.SONAR_URL }}
+            -Dsonar.login=${{ secrets.SONAR_TOKEN }}
+            -Dsonar.organization=${{ secrets.SONAR_ORGANIZATION }}
+            -Dsonar.projectKey=${{ secrets.SONAR_PROJECT_KEY }}
+            -Dsonar.sources=src/
+            -Dsonar.junit.reportsPath=target/surefire-reports/ 
+            -Dsonar.jacoco.reportsPath=target/jacoco.exec 
+            -Dsonar.java.checkstyle.reportPaths=target/checkstyle-result.xml
+            -Dsonar.java.binaries=target/test-classes/com/visualpathit/account/controllerTest/
 
-          # Returns 1 when the token can see the project
-          curl -s -u "$SONAR_TOKEN:" \
-            "https://sonarcloud.io/api/projects/search?organization=${ORG}&projects=${PROJ}" \
-            | tee resp.json
-          echo "Projects visible:"; jq -r '.paging.total' resp.json
+      # - name: Validate token
+      #   env:
+      #     SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
+      #   run: |
+      #     curl -s -u "$SONAR_TOKEN:" https://sonarcloud.io/api/authentication/validate | tee /dev/stderr
 
-      - name: Validate token
-        env:
-          SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
-        run: |
-          curl -s -u "$SONAR_TOKEN:" https://sonarcloud.io/api/authentication/validate | tee /dev/stderr
-
-      - name: Verify project visibility
-        env:
-          SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
-        run: |
-          curl -s -u "$SONAR_TOKEN:" \
-            "https://sonarcloud.io/api/projects/search?organization=ravisvprofile-actions22&projects=vprofile-action" \
-            | jq '.paging.total'
+      # - name: Verify project visibility
+      #   env:
+      #     SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
+      #   run: |
+      #     curl -s -u "$SONAR_TOKEN:" \
+      #       "https://sonarcloud.io/api/projects/search?organization=ravisvprofile-actions22&projects=vprofile-action" \
+      #       | jq '.paging.total'
       
-
-      - name: SonarCloud scan
+      # Check the Quality Gate status.
+      - name: SonarQube Quality Gate check
+        id: sonarqube-quality-gate-check
+        uses: sonarsource/sonarqube-quality-gate-action@master
+        # Force to fail step after specific time.\
+        timeout-minutes: 5
         env:
           SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
-          SONAR_URL:   ${{ secrets.SONAR_URL }}               # e.g. https://sonarcloud.io
-          SONAR_ORG:   ${{ secrets.SONAR_ORGANIZATION }}      # ravisvprofile-actions22
-          SONAR_PROJ:  ${{ secrets.SONAR_PROJECT_KEY }}       # vprofile-action
-        run: |
-          set -euo pipefail
-          # Trim sneaky whitespace/CRLFs from secrets
-          HOST="$(printf '%s' "${SONAR_URL:-https://sonarcloud.io}" | tr -d '\r' | xargs)"
-          ORG="$(printf  '%s' "$SONAR_ORG" | tr -d '\r' | xargs)"
-          PROJ="$(printf '%s' "$SONAR_PROJ" | tr -d '\r' | xargs)"
+          SONAR_HOST_URL: ${{ secrets.SONAR_URL }} #OPTIONAL\
 
-          sonar-scanner \
-            -Dsonar.host.url="$HOST" \
-            -Dsonar.token="$SONAR_TOKEN" \
-            -Dsonar.organization="$ORG" \
-            -Dsonar.projectKey="$PROJ" \
-            -Dsonar.projectName="vprofile-action" \
-            -Dsonar.sources=src \
-            -Dsonar.java.binaries="target/classes,target/test-classes" \
-            -Dsonar.junit.reportPaths="target/surefire-reports" \
-            -Dsonar.coverage.jacoco.xmlReportPaths="target/site/jacoco/jacoco.xml" \
-            -Dsonar.java.checkstyle.reportPaths="target/checkstyle-result.xml"
+  # BUILD_AND_PUBLISH:
+  #   needs: Testing
+  #   runs-on: ubuntu-latest
+  #   steps:
+  #     - name: Code checkout
+  #       uses: actions/checkout@v4
 
-  BUILD_AND_PUBLISH:
-    needs: Testing
-    runs-on: ubuntu-latest
-    steps:
-      - name: Code checkout
-        uses: actions/checkout@v4
-
-      - name: Build & Upload image to ECR
-        uses: appleboy/docker-ecr-action@master
-        with:
-          access_key: ${{ secrets.AWS_ACCESS_KEY_ID }}
-          secret_key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
-          registry:  ${{ secrets.REGISTRY }}
-          repo:      ${{ env.ECR_REPOSITORY }}
-          region:    ${{ env.AWS_REGION }}
-          tags: latest,${{ github.run_number }}
-          daemon_off: false
-          dockerfile: ./Dockerfile
-          context: ./
+  #     - name: Build & Upload image to ECR
+  #       uses: appleboy/docker-ecr-action@master
+  #       with:
+  #         access_key: ${{ secrets.AWS_ACCESS_KEY_ID }}
+  #         secret_key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+  #         registry:  ${{ secrets.REGISTRY }}
+  #         repo:      ${{ env.ECR_REPOSITORY }}
+  #         region:    ${{ env.AWS_REGION }}
+  #         tags: latest,${{ github.run_number }}
+  #         daemon_off: false
+  #         dockerfile: ./Dockerfile
+  #         context: ./
